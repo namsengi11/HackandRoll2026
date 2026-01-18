@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from lightweight_validation.recapture_check_gemini import _fetch_image_for_uuid
+
 CONFIG = {
   "maxSide": 960,
   "imgsz": 960,
@@ -101,16 +103,12 @@ def _evaluate_proposals(
 
   return {"accept": True}
 
-
-def check_foreground(image_bytes: bytes) -> dict:
+def check_foreground(image_uuid: str) -> dict:
+  image_bytes = _fetch_image_for_uuid(image_uuid)
   image = _decode_jpeg(image_bytes)
-  if image is None:
-    raise ValueError("invalid_jpeg")
-
   image = _resize_if_needed(image, CONFIG["maxSide"])
   boxes = _yolo_boxes(image)
   return _evaluate_proposals(image.shape, boxes)
-
 
 def render_segmentation(image_bytes: bytes, alpha: float = 0.5) -> bytes:
   image = _decode_jpeg(image_bytes)
