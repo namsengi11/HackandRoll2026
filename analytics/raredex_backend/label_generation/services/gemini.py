@@ -41,24 +41,16 @@ class GeminiService:
 
 
 def _parse_labels(text: str) -> List[str]:
-    """
-    Robustly parse Gemini output into a list of up to 3 label strings.
-    Handles:
-      - JSON arrays
-      - Markdown ```json code fences
-      - Extra prose around the JSON
-    """
     if not text:
         return []
 
     raw = text.strip()
 
-    # 1) Remove markdown code fences if the whole response is fenced
-    # e.g. ```json\n[...]\n```
+    # 1) Remove outer code fences if the *entire* response is fenced
     raw = re.sub(r"^\s*```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"\s*```\s*$", "", raw)
 
-    # 2) Try direct JSON parse first
+    # 2) Try direct JSON parse
     try:
         obj = json.loads(raw)
         if isinstance(obj, list):
@@ -66,20 +58,53 @@ def _parse_labels(text: str) -> List[str]:
     except json.JSONDecodeError:
         pass
 
-    # 3) Extract first JSON array substring [...] from the response and parse it
-    m = re.search(r"\[[\s\S]*?\]", raw)  # non-greedy match for first [...]
-    if m:
-        candidate = m.group(0)
-        try:
-            obj = json.loads(candidate)
-            if isinstance(obj, list):
-                return _clean_labels(obj)
-        except json.JSONDecodeError:
-            pass
+    # 3) Bracket-aware extraction of first JSON array
+    start = None
+    for i, ch in enumerate(raw):
+        if ch == "[":
+            start = i
+            break
 
-    # 4) Final fallback: split by newlines/commas (best-effort)
-    parts = [p.strip(" \t\r\n,") for p in re.split(r"[\n,]+", raw)]
-    parts = [p for p in parts if p and not p.lower().startswith("```")]
+    if start is not None:
+        depth = 0
+        in_string = False
+        escape = False
+
+        for j in range(start, len(raw)):
+            c = raw[j]
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif c == "\\":
+                    escape = True
+                elif c == '"':
+                    in_string = False
+                continue
+
+            if c == '"':
+                in_string = True
+                continue
+
+            if c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start:j + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, list):
+                            return _clean_labels(obj)
+                    except json.JSONDecodeError:
+                        break
+
+    # 4) LAST resort fallback
+    parts = [
+        p.strip(" \t\r\n,")
+        for p in re.split(r"[\n,]+", raw)
+        if p.strip() and not p.strip().startswith("```")
+    ]
     return _dedupe_preserve_order(parts)[:3]
 
 
