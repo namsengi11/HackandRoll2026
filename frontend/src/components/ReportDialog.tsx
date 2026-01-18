@@ -47,29 +47,16 @@ const REPORT_REASONS: { value: ReportReason; label: string; description: string 
 export function ReportDialog({ open, onOpenChange, onSubmit, itemLabel }: ReportDialogProps) {
   const [selectedReason, setSelectedReason] = useState<ReportReason | null>(null);
   const [details, setDetails] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    
+  const handleSubmit = () => {
     if (!selectedReason) return;
     if (selectedReason === 'other' && !details.trim()) {
       return;
     }
-    
-    setIsSubmitting(true);
-    try {
-      await onSubmit(selectedReason, selectedReason === 'other' ? details : undefined);
-      setSelectedReason(null);
-      setDetails('');
-      onOpenChange(false);
-    } catch (error) {
-      // Error handling is done in parent component
-      console.error('Report submission error:', error);
-    } finally {
-      setIsSubmitting(false);
-    }
+    onSubmit(selectedReason, selectedReason === 'other' ? details : undefined);
+    setSelectedReason(null);
+    setDetails('');
+    onOpenChange(false);
   };
 
   return (
@@ -87,50 +74,21 @@ export function ReportDialog({ open, onOpenChange, onSubmit, itemLabel }: Report
         </DialogHeader>
         <div className="py-4">
           <Label className="text-base font-semibold mb-3 block">Reason for reporting</Label>
-          <RadioGroup 
-            value={selectedReason || ''} 
-            onValueChange={(v: string) => {
-              if (!isSubmitting) {
-                setSelectedReason(v as ReportReason);
-              }
-            }}
-          >
-            {REPORT_REASONS.map((reason) => {
-              const isSelected = selectedReason === reason.value;
-              return (
-                <div 
-                  key={reason.value} 
-                  className="flex items-start space-x-3 py-2 cursor-pointer hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
-                  onClick={() => {
-                    if (!isSubmitting) {
-                      setSelectedReason(reason.value as ReportReason);
-                    }
-                  }}
-                >
-                  <RadioGroupItem 
-                    value={reason.value} 
-                    id={reason.value} 
-                    className="mt-1 flex-shrink-0"
-                    disabled={isSubmitting}
-                    checked={isSelected}
-                    onCheckedChange={() => {
-                      if (!isSubmitting) {
-                        setSelectedReason(reason.value as ReportReason);
-                      }
-                    }}
-                  />
-                  <div className="flex-1">
-                    <label
-                      htmlFor={reason.value}
-                      className="text-sm font-medium leading-none cursor-pointer block"
-                    >
-                      {reason.label}
-                    </label>
-                    <p className="text-xs text-gray-500 mt-1">{reason.description}</p>
-                  </div>
+          <RadioGroup value={selectedReason || ''} onValueChange={(v: string) => setSelectedReason(v as ReportReason)}>
+            {REPORT_REASONS.map((reason) => (
+              <div key={reason.value} className="flex items-start space-x-3 py-2">
+                <RadioGroupItem value={reason.value} id={reason.value} className="mt-1" />
+                <div className="flex-1">
+                  <label
+                    htmlFor={reason.value}
+                    className="text-sm font-medium leading-none cursor-pointer"
+                  >
+                    {reason.label}
+                  </label>
+                  <p className="text-xs text-gray-500 mt-1">{reason.description}</p>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </RadioGroup>
           {selectedReason === 'other' && (
             <div className="mt-4">
@@ -142,28 +100,19 @@ export function ReportDialog({ open, onOpenChange, onSubmit, itemLabel }: Report
                 onChange={(e) => setDetails(e.target.value)}
                 className="mt-2"
                 rows={3}
-                disabled={isSubmitting}
               />
             </div>
           )}
         </div>
         <DialogFooter>
-          <Button 
-            variant="outline" 
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onOpenChange(false);
-            }}
-            disabled={isSubmitting}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isSubmitting || !selectedReason || (selectedReason === 'other' && !details.trim())}
+            disabled={!selectedReason || (selectedReason === 'other' && !details.trim())}
           >
-            {isSubmitting ? 'Submitting...' : 'Submit Report'}
+            Submit Report
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -72,22 +72,9 @@ export function Feed() {
     saveFeedItem(itemId, user.id);
   };
 
-  const handleReport = async (itemId: string, reason: any, details?: string) => {
+  const handleReport = (itemId: string, reason: any, details?: string) => {
     if (!user) return;
-    try {
-      await reportFeedItem(itemId, user.id, reason, details);
-      // Refresh feed to remove rejected items
-      setTimeout(() => {
-        refreshFeed(user?.id || null, activeTab);
-      }, 500);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '';
-      if (errorMessage.includes('ALREADY_REPORTED')) {
-        // Toast will be shown by ReportDialog
-        throw error;
-      }
-      // Other errors are handled by store
-    }
+    reportFeedItem(itemId, user.id, reason, details);
   };
 
   return (

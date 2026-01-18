@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../state/store';
 import { useAuth } from '../contexts/AuthContext';
 import { supabaseApi } from '../lib/supabaseApi';
+import { supabaseDex } from '../lib/supabaseDex';
 import { CameraCapture } from '../components/CameraCapture';
 import { FineEntrySelect } from '../components/FineEntrySelect';
-import { AutoClassifyCard } from '../components/AutoClassifyCard';
 import { PageHeader } from '../components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -13,15 +13,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from '../components/ui/badge';
 import { LabelSelect } from '../components/LabelSelect';
 import { validateImageFile, checkImageDimensions } from '../utils/imageHelpers';
-import { isJpegFile, imageToJpeg } from '../utils/imageToJpeg';
+import { isJpegFile } from '../utils/imageToJpeg';
 import { sanitizeCopy } from '../utils/sanitizeCopy';
-import { mlApi } from '../api/ml';
-import { mlVerifyApi } from '../api/mlVerify';
 import { Camera, ChevronDown, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-
-type ClassificationStatus = 'idle' | 'running' | 'success' | 'failed';
 
 export function Upload() {
   const navigate = useNavigate();
@@ -35,57 +31,13 @@ export function Upload() {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [fileSize, setFileSize] = useState<number | null>(null);
   
-  // Submission state
-  const [submissionId, setSubmissionId] = useState<string | null>(null);
-  const [imagePath, setImagePath] = useState<string | null>(null);
-  
-  // Classification state
-  const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>('idle');
-  const [predictedCategory, setPredictedCategory] = useState<{ id: number; name: string } | null>(null);
-  const [coarseConfidence, setCoarseConfidence] = useState<number | null>(null);
-  const [suggestedEntries, setSuggestedEntries] = useState<Array<{
-    dex_entry_id: number;
-    fine_label: string;
-    rarity?: 'common' | 'rare' | 'epic';
-  }>>([]);
-  
-  // Fine selection state
-  const [step, setStep] = useState<'capture' | 'classify' | 'fine'>('capture');
+  // Coarse -> Fine selection state
+  const [step, setStep] = useState<'capture' | 'coarse' | 'fine'>('capture');
   const [coarseLabelId, setCoarseLabelId] = useState<number | null>(null);
-  const [fineItemName, setFineItemName] = useState<string>('');
-  const [showManualOverride, setShowManualOverride] = useState(false);
-  
-  // Verification state
-  const [verificationStatus, setVerificationStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
-  const [verificationError, setVerificationError] = useState<string | null>(null);
-  
-  // Abort controller for classification
-  const classifyAbortController = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    fetchLabels();
-  }, [fetchLabels]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (classifyAbortController.current) {
-        classifyAbortController.current.abort();
-      }
-    };
-  }, []);
-
-  // Auto-start classification when step changes to 'classify'
-  useEffect(() => {
-    if (step === 'classify' && classificationStatus === 'idle' && submissionId && user && jpegFile && labels.length > 0) {
-      // Small delay to ensure UI is ready
-      const timer = setTimeout(() => {
-        handleClassify();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, classificationStatus, submissionId, user?.id, jpegFile?.size, labels.length]);
+  const [coarseConfidence, setCoarseConfidence] = useState<number | null>(null);
+  const [fineDexEntryId, setFineDexEntryId] = useState<number | null>(null);
+  const [selectedVersion] = useState<string>('v0');
+  const [fineEntries, setFineEntries] = useState<any[]>([]);
 
   const handleCapture = async (file: File) => {
     setError(null);
@@ -97,232 +49,103 @@ export function Upload() {
       setJpegFile(null);
       setCapturedImageUrl(null);
       setFileSize(null);
-      setSubmissionId(null);
-      setImagePath(null);
-      setClassificationStatus('idle');
-      setPredictedCategory(null);
-      setCoarseLabelId(null);
-      setFineItemName('');
       setStep('capture');
       return;
     }
 
-    console.log('[camera] captured');
-
-    if (!user) {
-      setError('You must be logged in to upload');
+    // Camera already outputs JPEG, but validate
+    if (!isJpegFile(file)) {
+      setError('Camera capture must output JPEG format');
       return;
     }
 
-    try {
-      // Validate file
-      const validation = validateImageFile(file);
-      if (!validation.valid) {
-        setError(validation.error || 'Invalid file');
-        return;
-      }
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setError(validation.error || 'Invalid file');
+      return;
+    }
 
-      // Convert to JPEG if needed
-      let jpegFileToUse: File;
-      if (isJpegFile(file)) {
-        jpegFileToUse = file;
-      } else {
-        jpegFileToUse = await imageToJpeg(file, 0.85);
-      }
+    const dimensionCheck = await checkImageDimensions(file);
+    if (!dimensionCheck.valid) {
+      toast.warning(dimensionCheck.error || 'Image dimensions may be too small');
+    }
 
-      const dimensionCheck = await checkImageDimensions(jpegFileToUse);
-      if (!dimensionCheck.valid) {
-        toast.warning(dimensionCheck.error || 'Image dimensions may be too small');
-      }
-
-      // Create preview URL
-      const imageUrl = URL.createObjectURL(jpegFileToUse);
-      setCapturedImageUrl(imageUrl);
-      setJpegFile(jpegFileToUse);
-      setFileSize(jpegFileToUse.size);
-
-      // Step 1: Create submission row first (status='pending')
-      const submission = await supabaseApi.createSubmissionRow(user.id);
-      setSubmissionId(submission.id);
-
-      // Step 2: Upload image to storage
-      const uploadedPath = await supabaseApi.uploadSubmissionImage(
-        submission.id,
-        user.id,
-        jpegFileToUse
-      );
-      setImagePath(uploadedPath);
-
-      // Move to classification step
-      setStep('classify');
-      setClassificationStatus('idle');
-    } catch (err) {
-      console.error('[submission] create/upload failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to process image');
-      toast.error('Failed to process image', {
-        description: err instanceof Error ? err.message : 'Please try again.',
-      });
+    const imageUrl = URL.createObjectURL(file);
+    setCapturedImageUrl(imageUrl);
+    setJpegFile(file);
+    setFileSize(file.size);
+    
+    // Move to coarse selection after capture
+    setStep('coarse');
+    // Simulate ML classification (for demo, use first label as default)
+    if (labels.length > 0 && !coarseLabelId) {
+      setCoarseLabelId(labels[0].id);
+      setCoarseConfidence(0.85); // Demo confidence
     }
   };
 
-  const handleClassify = async () => {
-    if (!submissionId || !user || !jpegFile) {
-      setError('Missing required data for classification');
+  const handleCoarseNext = () => {
+    if (!coarseLabelId) {
+      setError('Please select a category');
       return;
     }
-
-    // Cancel any existing classification
-    if (classifyAbortController.current) {
-      classifyAbortController.current.abort();
-    }
-    classifyAbortController.current = new AbortController();
-
-    setClassificationStatus('running');
-    setError(null);
-
-    try {
-      // Call ML API
-      const result = await mlApi.classifySubmission(
-        submissionId,
-        user.id,
-        labels.map((l) => ({ id: l.id, name: l.name }))
-      );
-
-      // Check if aborted
-      if (classifyAbortController.current?.signal.aborted) {
-        return;
-      }
-
-      // Update state
-      setPredictedCategory({
-        id: result.coarse_label.id,
-        name: result.coarse_label.name,
-      });
-      setCoarseLabelId(result.coarse_label.id);
-      setCoarseConfidence(result.confidence);
-      setSuggestedEntries(result.suggested_entries);
-
-      // Update submission in database
-      await supabaseApi.updateSubmissionClassification(
-        submissionId,
-        result.coarse_label.id,
-        result.confidence,
-        result.coarse_label.id // Update label_id to match
-      );
-
-      setClassificationStatus('success');
-    } catch (err) {
-      if (classifyAbortController.current?.signal.aborted) {
-        return; // Ignore errors if aborted
-      }
-      console.error('[ml] failed:', err);
-      setClassificationStatus('failed');
-      setError(err instanceof Error ? err.message : 'Classification failed');
-      toast.error('Classification failed', {
-        description: 'Please try again or manually select a category.',
-      });
-    }
+    setStep('fine');
   };
 
   const handleFineNext = () => {
-    if (!fineItemName || fineItemName.trim() === '') {
-      setError('Please enter a specific item name');
-      return;
-    }
-    if (!coarseLabelId) {
-      setError('Please select or confirm a category');
+    if (!fineDexEntryId) {
+      setError('Please select a specific entry');
       return;
     }
     setShowConfirmDialog(true);
   };
 
+  useEffect(() => {
+    fetchLabels();
+  }, [fetchLabels]);
+
+  useEffect(() => {
+    if (coarseLabelId && step === 'fine') {
+      supabaseDex.getDexEntries(selectedVersion, { coarseLabelId }).then(setFineEntries);
+    }
+  }, [coarseLabelId, step, selectedVersion]);
+
   const confirmSubmit = async () => {
-    if (!jpegFile || !coarseLabelId || !fineItemName || !user || !submissionId) return;
+    if (!jpegFile || !coarseLabelId || !fineDexEntryId || !user) return;
 
     setUploading(true);
-    setVerificationStatus('running');
-    setVerificationError(null);
-    
     try {
-      // Step 1: Update submission with fine entry
-      await supabaseApi.updateSubmissionFineEntry(
-        submissionId,
-        fineItemName,
-        null // fineDexEntryId - not using dex entries, just text
-      );
-      console.log('[fine] selected:', {
-        submission_id: submissionId,
-        user_id: user.id,
-        fine_label: fineItemName,
-        fine_dex_entry_id: null,
-      });
-
-      // Step 2: Call verification ML endpoint
-      const verificationResult = await mlVerifyApi.verifySubmission(
-        submissionId,
+      await supabaseApi.createSubmission(
         user.id,
-        null, // fineDexEntryId
-        fineItemName // fineLabel
+        jpegFile,
+        coarseLabelId, // Use coarse label as label_id for now
+        undefined, // caption
+        coarseLabelId,
+        coarseConfidence,
+        fineDexEntryId,
+        null // fine confidence
       );
-
-      // Step 3: Update submission with verification results
-      await supabaseApi.updateSubmissionVerification(
-        submissionId,
-        verificationResult.ok,
-        verificationResult.score,
-        verificationResult.reason || null
-      );
-
-      // Step 4: Publish or reject based on verification
-      if (verificationResult.ok) {
-        // Verification passed - publish to feed
-        await supabaseApi.publishSubmission(submissionId);
-        setVerificationStatus('success');
-
-        toast.success('Added to RareDex!', {
-          description: 'Your submission has been verified and is now in the feed.',
-        });
-        
-        // Cleanup
-        if (capturedImageUrl) {
-          URL.revokeObjectURL(capturedImageUrl);
-        }
-        setJpegFile(null);
-        setCapturedImageUrl(null);
-        setSubmissionId(null);
-        setImagePath(null);
-        setCoarseLabelId(null);
-        setFineItemName('');
-        setFileSize(null);
-        setClassificationStatus('idle');
-        setPredictedCategory(null);
-        setVerificationStatus('idle');
-        setStep('capture');
-        setShowConfirmDialog(false);
-        
-        // Refresh feed and navigate
-        setTimeout(() => {
-          navigate('/feed');
-        }, 1500);
-      } else {
-        // Verification failed - reject submission
-        await supabaseApi.rejectSubmission(submissionId, verificationResult.reason || 'Verification failed');
-        setVerificationStatus('failed');
-        setVerificationError(verificationResult.reason || 'Verification failed. Please choose a different label or retake photo.');
-
-        toast.error('Verification Failed', {
-          description: verificationResult.reason || 'Please choose a different label or retake photo.',
-          duration: 5000,
-        });
-
-        // Don't close dialog - allow user to retry
-        setShowConfirmDialog(false);
+      toast.success('Added to RareDex!', {
+        description: 'Your submission is now in the feed.',
+      });
+      
+      if (capturedImageUrl) {
+        URL.revokeObjectURL(capturedImageUrl);
       }
+      setJpegFile(null);
+      setCapturedImageUrl(null);
+      setCoarseLabelId(null);
+      setFineDexEntryId(null);
+      setFileSize(null);
+      setStep('capture');
+      setShowConfirmDialog(false);
+      
+      // Refresh feed and navigate
+      setTimeout(() => {
+        navigate('/feed');
+      }, 1500);
     } catch (err) {
-      console.error('[verify] failed:', err);
-      setVerificationStatus('failed');
-      setVerificationError(err instanceof Error ? err.message : 'Verification failed. Please try again.');
-      toast.error('Verification Failed', {
+      toast.error('Failed to submit', {
         description: err instanceof Error ? err.message : 'Please try again.',
       });
     } finally {
@@ -337,6 +160,7 @@ export function Upload() {
   };
 
   const selectedCoarseLabel = labels.find((l) => l.id === coarseLabelId);
+  const selectedFineEntry = fineEntries.find((e) => e.id === fineDexEntryId);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -348,18 +172,18 @@ export function Upload() {
       {/* Stepper */}
       <div className="mb-6">
         <div className="flex items-center justify-center gap-4">
-          <div className={`flex items-center gap-2 ${step === 'capture' ? 'text-primary-600' : (step === 'classify' || step === 'fine') ? 'text-green-600' : 'text-gray-400'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'capture' ? 'bg-primary-600 text-white' : (step === 'classify' || step === 'fine') ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
-              {(step === 'classify' || step === 'fine') ? <CheckCircle2 className="h-5 w-5" /> : '1'}
+          <div className={`flex items-center gap-2 ${step === 'capture' ? 'text-primary-600' : (step === 'coarse' || step === 'fine') ? 'text-green-600' : 'text-gray-400'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'capture' ? 'bg-primary-600 text-white' : (step === 'coarse' || step === 'fine') ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
+              {(step === 'coarse' || step === 'fine') ? <CheckCircle2 className="h-5 w-5" /> : '1'}
             </div>
             <span className="font-medium">Capture</span>
           </div>
           <ArrowRight className="h-5 w-5 text-gray-400" />
-          <div className={`flex items-center gap-2 ${step === 'classify' ? 'text-primary-600' : step === 'fine' ? 'text-green-600' : 'text-gray-400'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'classify' ? 'bg-primary-600 text-white' : step === 'fine' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
+          <div className={`flex items-center gap-2 ${step === 'coarse' ? 'text-primary-600' : step === 'fine' ? 'text-green-600' : 'text-gray-400'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'coarse' ? 'bg-primary-600 text-white' : step === 'fine' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
               {step === 'fine' ? <CheckCircle2 className="h-5 w-5" /> : '2'}
             </div>
-            <span className="font-medium">Classify</span>
+            <span className="font-medium">Category</span>
           </div>
           <ArrowRight className="h-5 w-5 text-gray-400" />
           <div className={`flex items-center gap-2 ${step === 'fine' ? 'text-primary-600' : 'text-gray-400'}`}>
@@ -413,137 +237,81 @@ export function Upload() {
             </Card>
           )}
 
-          {/* Step 2: Auto-Classify */}
-          {step === 'classify' && (
-            <div className="space-y-4">
-              {/* Draft badge */}
-              {submissionId && (
-                <div className="flex items-center gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <Badge variant="warning" className="text-xs">
-                    Draft
-                  </Badge>
-                  <span className="text-sm text-gray-600">
-                    {classificationStatus === 'running' ? 'Analyzing...' : 'Not published yet'}
-                  </span>
-                </div>
-              )}
-
-              <AutoClassifyCard
-                status={classificationStatus}
-                predictedCategory={predictedCategory}
-                confidence={coarseConfidence}
-                suggestedEntries={suggestedEntries}
-                onClassify={handleClassify}
-                onOverride={showManualOverride ? undefined : () => setShowManualOverride(true)}
-                disabled={isLoading || uploading}
-              />
-
-              {/* Manual override (shown when user clicks "Change Category") */}
-              {showManualOverride && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Manual Category Selection</CardTitle>
-                    <CardDescription>
-                      Override the AI prediction and select a category manually
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <LabelSelect
-                      labels={labels}
-                      value={coarseLabelId}
-                      onChange={(id) => {
-                        setCoarseLabelId(id);
-                        setCoarseConfidence(null);
-                      }}
-                      disabled={isLoading}
-                    />
+          {/* Step 2: Coarse Category */}
+          {step === 'coarse' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Step 2: Select Category</CardTitle>
+                <CardDescription>
+                  {coarseConfidence
+                    ? `We think this is: ${selectedCoarseLabel?.name || 'Unknown'} (${Math.round(coarseConfidence * 100)}% confidence)`
+                    : 'What broad category does this item belong to?'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <LabelSelect
+                  labels={labels}
+                  value={coarseLabelId}
+                  onChange={setCoarseLabelId}
+                  disabled={isLoading}
+                />
+                {coarseConfidence && (
+                  <div className="text-sm text-gray-600">
                     <Button
                       variant="outline"
+                      size="sm"
                       onClick={() => {
-                        setShowManualOverride(false);
-                        if (predictedCategory) {
-                          setCoarseLabelId(predictedCategory.id);
-                          setCoarseConfidence(coarseConfidence);
-                        }
+                        setCoarseConfidence(null);
+                        setCoarseLabelId(null);
                       }}
                     >
-                      Use AI Prediction Instead
+                      Change category
                     </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Next button - only enabled when category is selected and classification is not running */}
-              {coarseLabelId && (
+                  </div>
+                )}
                 <Button
-                  onClick={() => setStep('fine')}
-                  disabled={classificationStatus === 'running'}
+                  onClick={handleCoarseNext}
+                  disabled={!coarseLabelId}
                   className="w-full"
-                  size="lg"
                 >
-                  Next: Enter Specific Item
+                  Next: Choose Specific Item
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
-              )}
-              
-              {/* Show message if classification is still running */}
-              {classificationStatus === 'running' && (
-                <p className="text-sm text-gray-500 text-center">
-                  Please wait for classification to complete...
-                </p>
-              )}
-            </div>
+              </CardContent>
+            </Card>
           )}
 
           {/* Step 3: Fine Entry */}
           {step === 'fine' && coarseLabelId && (
             <Card>
               <CardHeader>
-                <CardTitle>Step 3: Enter Specific Item</CardTitle>
+                <CardTitle>Step 3: Choose Specific Item</CardTitle>
                 <CardDescription>
-                  Enter the name of the specific item in {selectedCoarseLabel?.name || 'this category'}
+                  Select the specific item from {selectedCoarseLabel?.name || 'this category'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Show suggested entries as chips */}
-                {suggestedEntries.length > 0 && (
-                  <div>
-                    <div className="text-sm font-medium text-gray-700 mb-2">AI Suggestions</div>
-                    <div className="flex flex-wrap gap-2">
-                      {suggestedEntries.map((entry, index) => (
-                        <button
-                          key={index}
-                          onClick={() => setFineItemName(entry.fine_label)}
-                          className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
-                        >
-                          {entry.fine_label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 <FineEntrySelect
                   coarseLabelId={coarseLabelId}
-                  versionId="v0"
-                  value={fineItemName}
-                  onChange={setFineItemName}
+                  versionId={selectedVersion}
+                  value={fineDexEntryId}
+                  onChange={setFineDexEntryId}
                   disabled={isLoading}
                 />
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => setStep('classify')}
+                    onClick={() => setStep('coarse')}
                     className="flex-1"
                   >
                     Back
                   </Button>
                   <Button
                     onClick={handleFineNext}
-                    disabled={!fineItemName || fineItemName.trim() === '' || !coarseLabelId}
+                    disabled={!fineDexEntryId}
                     className="flex-1"
                   >
-                    Review & Publish
+                    Review & Submit
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
                 </div>
@@ -627,19 +395,11 @@ export function Upload() {
                 {selectedCoarseLabel?.name || 'Not selected'}
               </span>
             </div>
-            {coarseConfidence && (
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                <span className="text-sm text-gray-600">Confidence:</span>
-                <Badge variant="success" className="text-xs">
-                  {Math.round(coarseConfidence * 100)}%
-                </Badge>
-              </div>
-            )}
-            {fineItemName && (
+            {selectedFineEntry && (
               <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
                 <span className="text-sm text-gray-600">Specific Item:</span>
                 <span className="font-semibold text-gray-900">
-                  {fineItemName}
+                  {selectedFineEntry.fine_label}
                 </span>
               </div>
             )}
@@ -651,52 +411,16 @@ export function Upload() {
                 </Badge>
               </div>
             )}
-            
-            {/* Verification status */}
-            {verificationStatus === 'running' && (
-              <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-blue-700">Verifying submission...</span>
-              </div>
-            )}
-            
-            {verificationStatus === 'failed' && verificationError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-700 font-medium">Verification Failed</p>
-                <p className="text-sm text-red-600 mt-1">{verificationError}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  onClick={() => {
-                    setVerificationStatus('idle');
-                    setVerificationError(null);
-                    setShowConfirmDialog(false);
-                    setStep('fine');
-                  }}
-                >
-                  Try Different Label
-                </Button>
-              </div>
-            )}
           </div>
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => {
-                setShowConfirmDialog(false);
-                setVerificationStatus('idle');
-                setVerificationError(null);
-              }}
-              disabled={uploading || verificationStatus === 'running'}
+              onClick={() => setShowConfirmDialog(false)}
             >
               Cancel
             </Button>
-            <Button 
-              onClick={confirmSubmit} 
-              disabled={uploading || verificationStatus === 'running'}
-            >
-              {verificationStatus === 'running' ? 'Verifying...' : verificationStatus === 'failed' ? 'Retry' : uploading ? 'Publishing...' : 'Publish to Feed'}
+            <Button onClick={confirmSubmit} disabled={uploading}>
+              {isLoading ? 'Submitting...' : 'Confirm & Add to RareDex'}
             </Button>
           </DialogFooter>
         </DialogContent>

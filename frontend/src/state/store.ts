@@ -209,9 +209,8 @@ export const useStore = create<AppState>((set, get) => ({
 
   reportFeedItem: async (submissionId: string, userId: string, reason: ReportReason, details?: string) => {
     try {
-      await supabaseApi.reportSubmission(submissionId, userId, details || reason || null);
-      
-      // Update local state - increment report count
+      await supabaseApi.reportSubmission(submissionId, userId, reason, details);
+      // Update local state
       set((state) => {
         const updatedFeedByTab = { ...state.feedByTab };
         Object.keys(updatedFeedByTab).forEach((tab) => {
@@ -219,34 +218,19 @@ export const useStore = create<AppState>((set, get) => ({
             tab as keyof typeof updatedFeedByTab
           ].map((item) => {
             if (item.submissionId === submissionId) {
-              const newCount = item.reportCount + 1;
               return {
                 ...item,
-                reportCount: newCount,
-                flagged: newCount >= 2,
+                reportCount: item.reportCount + 1,
+                flagged: item.reportCount + 1 >= 2,
               };
             }
             return item;
-          }).filter((item) => {
-            // Remove from feed if report_count >= 3 (status becomes 'rejected' via trigger)
-            // Feed only shows status='active', so rejected items should disappear
-            if (item.submissionId === submissionId && item.reportCount + 1 >= 3) {
-              return false; // Remove this item
-            }
-            return true;
           });
         });
         return { feedByTab: updatedFeedByTab };
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to report item';
-      
-      // Handle unique constraint violation (already reported)
-      if (errorMessage.includes('ALREADY_REPORTED') || errorMessage.includes('already reported')) {
-        throw new Error('ALREADY_REPORTED');
-      }
-      
-      set({ error: errorMessage });
+      set({ error: error instanceof Error ? error.message : 'Failed to report item' });
       throw error;
     }
   },

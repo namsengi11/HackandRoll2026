@@ -62,23 +62,10 @@ export function FeedPost({ item, onLike, onSave, onReport }: FeedPostProps) {
     }
   };
 
-  const handleReport = async (reason: ReportReason, details?: string) => {
-    try {
-      await onReport(reason, details);
-      toast.success('Report received — thanks for keeping RareDex clean.');
-      setShowMenu(false);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '';
-      if (errorMessage.includes('ALREADY_REPORTED')) {
-        toast.error('Already reported', {
-          description: 'You have already reported this submission.',
-        });
-      } else {
-        toast.error('Failed to report', {
-          description: errorMessage || 'Please try again.',
-        });
-      }
-    }
+  const handleReport = (reason: ReportReason, details?: string) => {
+    onReport(reason, details);
+    toast.success('Report received — thanks for keeping RareDex clean.');
+    setShowMenu(false);
   };
 
   // Close menu when clicking outside

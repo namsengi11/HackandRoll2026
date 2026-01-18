@@ -1,19 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
+import { supabaseDex, type DexEntry } from '../lib/supabaseDex';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
+import { Badge } from './ui/badge';
+import { Card, CardContent } from './ui/card';
+import { rarityToSet, getSetColor } from '../utils/sanitizeCopy';
+import { Search } from 'lucide-react';
 
 interface FineEntrySelectProps {
-  coarseLabelId: number | null;
+  coarseLabelId: number;
   versionId?: string;
-  value: string;
-  onChange: (value: string) => void;
+  value: number | null;
+  onChange: (entryId: number) => void;
   disabled?: boolean;
-}
-
-// Helper function to capitalize first letter (preserve rest of string)
-function capitalizeFirstLetter(str: string): string {
-  if (!str) return str;
-  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 export function FineEntrySelect({
@@ -23,68 +21,69 @@ export function FineEntrySelect({
   onChange,
   disabled,
 }: FineEntrySelectProps) {
-  const [inputValue, setInputValue] = useState(() => {
-    // Safely initialize with value or empty string
-    try {
-      return value || '';
-    } catch {
-      return '';
-    }
-  });
+  const [entries, setEntries] = useState<DexEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Update local state when value prop changes
   useEffect(() => {
-    try {
-      setInputValue(value || '');
-    } catch (error) {
-      console.error('Error updating input value:', error);
-      setInputValue('');
-    }
-  }, [value]);
+    loadEntries();
+  }, [coarseLabelId, versionId]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const loadEntries = async () => {
+    setLoading(true);
     try {
-      const newValue = e.target.value || '';
-      setInputValue(newValue);
-      onChange(newValue);
+      const data = await supabaseDex.getDexEntries(versionId, {
+        coarseLabelId,
+      });
+      setEntries(data);
     } catch (error) {
-      console.error('Error handling input change:', error);
+      console.error('Error loading entries:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleBlur = () => {
-    // On blur, ensure first letter is capitalized
-    if (inputValue.length > 0 && inputValue.charAt(0) !== inputValue.charAt(0).toUpperCase()) {
-      const formatted = capitalizeFirstLetter(inputValue.trim());
-      setInputValue(formatted);
-      onChange(formatted);
-    } else if (inputValue.length > 0) {
-      // Trim whitespace
-      const trimmed = inputValue.trim();
-      if (trimmed !== inputValue) {
-        setInputValue(trimmed);
-        onChange(trimmed);
-      }
-    }
-  };
+  const filteredEntries = entries.filter((e) =>
+    e.fine_label.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
 
   return (
-    <div className="space-y-2">
-      <Label htmlFor="fine-entry-input">Specific Item Name</Label>
-      <Input
-        id="fine-entry-input"
-        type="text"
-        placeholder="Enter the specific item name (e.g., Vintage Camera)"
-        value={inputValue}
-        onChange={handleChange}
-        onBlur={handleBlur}
-        disabled={disabled}
-        className="w-full"
-        autoFocus
-      />
-      <p className="text-xs text-gray-500">
-        The first letter will be automatically capitalized.
-      </p>
-    </div>
+    <Card>
+      <CardContent className="p-0">
+        <Command className="rounded-lg border-0">
+          <CommandInput
+            placeholder="Search for specific item..."
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+          />
+          <CommandList className="max-h-[300px]">
+            {loading ? (
+              <div className="py-6 text-center text-sm text-gray-500">Loading...</div>
+            ) : filteredEntries.length === 0 ? (
+              <CommandEmpty>No entries found.</CommandEmpty>
+            ) : (
+              <CommandGroup>
+                {filteredEntries.map((entry) => (
+                  <CommandItem
+                    key={entry.id}
+                    value={entry.fine_label}
+                    onSelect={() => !disabled && onChange(entry.id)}
+                    className="cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span>{entry.fine_label}</span>
+                      <Badge className={getSetColor(entry.rarity)}>
+                        {rarityToSet(entry.rarity)}
+                      </Badge>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </CardContent>
+    </Card>
   );
 }

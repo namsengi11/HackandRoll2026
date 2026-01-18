@@ -15,8 +15,6 @@ export interface Profile {
   avatar_seed: string;
 }
 
-export type SubmissionStatus = 'pending' | 'active' | 'flagged' | 'rejected';
-
 export interface Submission {
   id: string;
   uploader_id: string;
@@ -25,7 +23,7 @@ export interface Submission {
   caption: string | null;
   created_at: string;
   report_count: number;
-  status: SubmissionStatus;
+  status: 'active' | 'flagged' | 'rejected';
   coarse_label_id?: number | null;
   coarse_confidence?: number | null;
   fine_dex_entry_id?: number | null;
@@ -86,12 +84,10 @@ export const supabaseApi = {
   ): Promise<{ items: FeedItem[]; nextCursor: { created_at: string; id: string } | null }> {
     try {
       // Build query - fetch submissions first, then join labels and profiles separately
-      // Only show 'active' submissions in feed (exclude 'rejected' drafts, 'flagged')
-      // Note: Drafts are created with status='rejected' temporarily as workaround, then changed to 'active' on publish
       let query = supabase
         .from('submissions')
         .select('*')
-        .eq('status', 'active')
+        .in('status', ['active', 'flagged'])
         .order('created_at', { ascending: false })
         .limit(limit + 1);
 
@@ -272,274 +268,30 @@ export const supabaseApi = {
   },
 
   // Report
-  // Create submission row first (before upload/classification) with status='rejected' (temporary draft status)
-  // Note: Using 'rejected' as draft since database constraint doesn't allow 'pending'
-  // Feed filters by status='active', so 'rejected' won't appear in feed
-  // This is a workaround - ideally the database would support 'pending' or 'draft' status
-  async createSubmissionRow(userId: string): Promise<Submission> {
-    console.log('[auth] user id:', userId);
-    
-    // Verify user is authenticated
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || user.id !== userId) {
-      console.error('[submission] insert failed: User not authenticated or user ID mismatch');
-      throw new Error('User not authenticated or user ID mismatch');
-    }
-
-    // Generate submission ID
-    const submissionId = crypto.randomUUID();
-    
-    // Generate image path (will be uploaded to this path)
-    const imagePath = `${userId}/${submissionId}.jpg`;
-
-    // Get first valid label_id to satisfy foreign key constraint
-    // This will be updated after classification with the correct label
-    const { data: labels, error: labelsError } = await supabase
-      .from('labels')
-      .select('id')
-      .limit(1)
-      .single();
-
-    if (labelsError || !labels) {
-      console.error('[submission] failed to fetch default label:', labelsError);
-      throw new Error('Failed to fetch default label for submission creation');
-    }
-
-    const defaultLabelId = labels.id;
-    console.log('[submission] using default label_id:', defaultLabelId, '(will be updated after classification)');
-
-    console.log('[submission] creating draft submission (status=rejected as workaround, will change to active on publish)...');
-
-    // Insert with status='rejected' (acts as draft - won't appear in feed)
-    // Feed filters by status='active', so rejected submissions are hidden
-    // This is a temporary workaround until database supports 'pending' or 'draft' status
-    const { data, error } = await supabase
-      .from('submissions')
-      .insert({
-        id: submissionId,
-        uploader_id: userId,
-        status: 'rejected', // Using 'rejected' as temporary draft status (database constraint doesn't allow 'pending')
-        report_count: 0,
-        label_id: defaultLabelId, // Use valid label_id from database (will be updated after classification)
-        image_path: imagePath, // Path we'll upload to (satisfies NOT NULL constraint)
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[submission] insert failed:', error);
-      throw new Error(`Failed to create submission: ${error.message} (Code: ${error.code})`);
-    }
-
-    console.log('[submission] created draft (status=rejected as workaround, will publish as active)');
-    console.log('[submission] id:', data.id);
-
-    return data;
-  },
-
-  // Upload image to storage
-  async uploadSubmissionImage(
-    submissionId: string,
-    userId: string,
-    file: File
-  ): Promise<string> {
-    const imagePath = `${userId}/${submissionId}.jpg`;
-
-    console.log('[upload] path:', imagePath);
-
-    const { data: uploadData, error: storageError } = await supabase.storage
-      .from('submissions')
-      .upload(imagePath, file, {
-        contentType: 'image/jpeg',
-        upsert: true, // Allow overwrite
-      });
-
-    if (storageError) {
-      console.error('[upload] failed:', storageError);
-      throw new Error(`Storage upload failed: ${storageError.message}`);
-    }
-
-    console.log('[upload] success');
-
-    // Note: image_path was already set when creating the submission row
-    // No need to update it again, but we verify it matches
-    console.log('[submission] image_path already set during creation');
-
-    return imagePath;
-  },
-
-  // Update submission with classification results
-  async updateSubmissionClassification(
-    submissionId: string,
-    coarseLabelId: number,
-    confidence: number,
-    labelId?: number // Optional: update label_id to match coarse_label_id
-  ): Promise<void> {
-    const updateData: {
-      coarse_label_id: number;
-      coarse_confidence: number;
-      label_id?: number;
-    } = {
-      coarse_label_id: coarseLabelId,
-      coarse_confidence: confidence,
-    };
-
-    if (labelId !== undefined) {
-      updateData.label_id = labelId;
-    }
-
-    const { error } = await supabase
-      .from('submissions')
-      .update(updateData)
-      .eq('id', submissionId);
-
-    if (error) {
-      console.error('[ml] result save failed:', error);
-      throw new Error(`Failed to update classification: ${error.message}`);
-    }
-
-    console.log('[ml] result saved');
-  },
-
-  // Update submission with verification results
-  async updateSubmissionVerification(
-    submissionId: string,
-    verified: boolean,
-    score: number,
-    reason?: string | null
-  ): Promise<void> {
-    const updateData: {
-      verified: boolean;
-      verification_score: number;
-      verification_reason?: string | null;
-    } = {
-      verified,
-      verification_score: score,
-    };
-
-    if (reason !== undefined) {
-      updateData.verification_reason = reason;
-    }
-
-    const { error } = await supabase
-      .from('submissions')
-      .update(updateData)
-      .eq('id', submissionId);
-
-    if (error) {
-      console.error('[verify] result save failed:', error);
-      throw new Error(`Failed to update verification: ${error.message}`);
-    }
-
-    console.log('[verify] result saved:', { verified, score, reason });
-  },
-
-  // Publish submission to feed (set status to 'active')
-  async publishSubmission(submissionId: string): Promise<void> {
-    console.log('[publish] status active', submissionId);
-
-    const { error } = await supabase
-      .from('submissions')
-      .update({ status: 'active' })
-      .eq('id', submissionId);
-
-    if (error) {
-      console.error('[publish] failed:', error);
-      throw new Error(`Failed to publish submission: ${error.message}`);
-    }
-
-    console.log('[submission] published active');
-    console.log('[submission] id:', submissionId);
-  },
-
-  // Reject submission (set status to 'rejected')
-  async rejectSubmission(submissionId: string, reason?: string): Promise<void> {
-    console.log('[publish] status rejected', submissionId, reason);
-
-    const updateData: {
-      status: string;
-      verification_reason?: string;
-    } = {
-      status: 'rejected',
-    };
-
-    if (reason) {
-      updateData.verification_reason = reason;
-    }
-
-    const { error } = await supabase
-      .from('submissions')
-      .update(updateData)
-      .eq('id', submissionId);
-
-    if (error) {
-      console.error('[publish] reject failed:', error);
-      throw new Error(`Failed to reject submission: ${error.message}`);
-    }
-
-    console.log('[submission] rejected');
-    console.log('[submission] id:', submissionId);
-  },
-
-  // Report a submission
   async reportSubmission(
     submissionId: string,
     reporterId: string,
-    reason?: string | null
+    reason: ReportReason,
+    details?: string
   ): Promise<void> {
     const { error } = await supabase
       .from('reports')
       .insert({
         submission_id: submissionId,
         reporter_id: reporterId,
-        reason: reason || null,
+        reason,
+        details: details || null,
       });
 
     if (error) {
-      // Check if it's a unique constraint violation (already reported)
-      if (error.code === '23505') {
-        throw new Error('ALREADY_REPORTED');
+      if (error.code === '23505') { // Unique constraint violation
+        throw new Error('You have already reported this submission');
       }
-      console.error('[report] failed:', error);
-      throw new Error(`Failed to report submission: ${error.message}`);
-    }
-
-    console.log('[report] submitted:', { submissionId, reporterId, reason });
-  },
-
-  // Update submission with fine entry selection
-  async updateSubmissionFineEntry(
-    submissionId: string,
-    fineItemName: string,
-    fineDexEntryId?: number | null
-  ): Promise<void> {
-    const updateData: {
-      caption: string;
-      fine_dex_entry_id?: number | null;
-    } = {
-      caption: fineItemName,
-    };
-
-    if (fineDexEntryId !== undefined) {
-      updateData.fine_dex_entry_id = fineDexEntryId;
-    }
-
-    const { error } = await supabase
-      .from('submissions')
-      .update(updateData)
-      .eq('id', submissionId);
-
-    if (error) {
-      console.error('[fine] update failed:', error);
-      throw new Error(`Failed to update fine entry: ${error.message}`);
-    }
-
-    if (fineDexEntryId) {
-      console.log('[fine] selected dex_entry_id:', fineDexEntryId);
+      throw error;
     }
   },
 
-  // Legacy createSubmission (kept for backward compatibility)
+  // Upload
   async createSubmission(
     userId: string,
     file: File,
@@ -548,8 +300,7 @@ export const supabaseApi = {
     coarseLabelId?: number | null,
     coarseConfidence?: number | null,
     fineDexEntryId?: number | null,
-    fineConfidence?: number | null,
-    fineItemName?: string | null
+    fineConfidence?: number | null
   ): Promise<Submission> {
     // Verify user is authenticated
     const { data: { user } } = await supabase.auth.getUser();
@@ -581,9 +332,6 @@ export const supabaseApi = {
     console.log('Storage upload successful:', uploadData);
 
     // Insert submission record
-    // Use fineItemName in caption if caption is not provided
-    const finalCaption = caption || fineItemName || null;
-    
     const { data, error } = await supabase
       .from('submissions')
       .insert({
@@ -591,7 +339,7 @@ export const supabaseApi = {
         uploader_id: userId,
         image_path: imagePath,
         label_id: labelId,
-        caption: finalCaption,
+        caption: caption || null,
         status: 'active', // Explicitly set status
         report_count: 0, // Explicitly set report_count
         coarse_label_id: coarseLabelId || null,
