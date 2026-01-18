@@ -18,6 +18,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "requests>=2.31",
   "python-dotenv>=1.0",
+  "supabase>=2.27.2",
   "pillow>=10.2",
   "numpy>=1.26",
   "torch>=2.2",

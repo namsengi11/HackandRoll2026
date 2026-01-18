@@ -300,8 +300,7 @@ export const supabaseApi = {
     coarseLabelId?: number | null,
     coarseConfidence?: number | null,
     fineDexEntryId?: number | null,
-    fineConfidence?: number | null,
-    fineItemName?: string | null
+    fineConfidence?: number | null
   ): Promise<Submission> {
     // Verify user is authenticated
     const { data: { user } } = await supabase.auth.getUser();
@@ -333,9 +332,6 @@ export const supabaseApi = {
     console.log('Storage upload successful:', uploadData);
 
     // Insert submission record
-    // Use fineItemName in caption if caption is not provided
-    const finalCaption = caption || fineItemName || null;
-    
     const { data, error } = await supabase
       .from('submissions')
       .insert({
@@ -343,7 +339,7 @@ export const supabaseApi = {
         uploader_id: userId,
         image_path: imagePath,
         label_id: labelId,
-        caption: finalCaption,
+        caption: caption || null,
         status: 'active', // Explicitly set status
         report_count: 0, // Explicitly set report_count
         coarse_label_id: coarseLabelId || null,

@@ -1,0 +1,25 @@
+[project]
+name = "lightweight-validation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "dotenv>=0.9.9",
+    "fastapi>=0.128.0",
+    "google-genai>=1.59.0",
+    "google-generativeai>=0.8.6",
+    "httpx>=0.28.1",
+    "ipykernel>=7.1.0",
+    "jupyter>=1.1.1",
+    "numpy>=2.4.1",
+    "opencv-contrib-python>=4.11.0.86",
+    "opencv-python>=4.11.0.86",
+    "pillow-heif>=1.1.1",
+    "pytest>=8.4.0",
+    "python-multipart>=0.0.21",
+    "supabase>=2.27.2",
+    "ultralytics>=8.4.5",
+    "uvicorn>=0.40.0",
+]

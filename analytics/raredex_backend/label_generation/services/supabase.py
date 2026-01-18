@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from supabase import create_client
 
-from analytics.raredex_backend.label_generation.core.config import Settings
+from raredex_backend.label_generation.core.config import Settings
 
 
 class SupabaseService:
