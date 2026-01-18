@@ -1,0 +1,10 @@
+[project]
+name = "hackandroll2026"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "clip>=0.2.0",
+    "transformers>=4.57.6",
+]

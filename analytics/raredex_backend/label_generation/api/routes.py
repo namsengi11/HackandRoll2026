@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from raredex_backend.label_generation.api.schemas import LabelsResponse
-from raredex_backend.label_generation.core.config import Settings
-from raredex_backend.label_generation.pipelines.label_proposal import LabelProposalPipeline
-from raredex_backend.label_generation.repos.labels import LabelsRepository
-from raredex_backend.label_generation.services.gemini import GeminiService
-from raredex_backend.label_generation.services.supabase import SupabaseService
+from analytics.raredex_backend.label_generation.api.schemas import LabelsResponse
+from analytics.raredex_backend.label_generation.core.config import Settings
+from analytics.raredex_backend.label_generation.pipelines.label_proposal import LabelProposalPipeline
+from analytics.raredex_backend.label_generation.repos.labels import LabelsRepository
+from analytics.raredex_backend.label_generation.services.gemini import GeminiService
+from analytics.raredex_backend.label_generation.services.supabase import SupabaseService
 
 router = APIRouter()
 
@@ -30,15 +30,15 @@ async def labels_from_file(
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    pipeline = _build_pipeline(router.settings)  
+    pipeline = _build_pipeline(router.settings)
     labels = pipeline.propose(image_bytes=image_bytes, mime_type="image/jpeg")
     return LabelsResponse(labels=labels)
 
 
 @router.get("/labels/{image_uuid}", response_model=LabelsResponse)
 def labels_from_uuid(image_uuid: str):
-    pipeline = _build_pipeline(router.settings)  
-    supabase = SupabaseService(router.settings)  
+    pipeline = _build_pipeline(router.settings)
+    supabase = SupabaseService(router.settings)
     image_bytes = supabase.download_submission_image(image_uuid)
     labels = pipeline.propose(image_bytes=image_bytes, mime_type="image/jpeg")
     return LabelsResponse(labels=labels)

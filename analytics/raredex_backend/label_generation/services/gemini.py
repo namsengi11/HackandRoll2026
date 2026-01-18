@@ -7,8 +7,8 @@ from typing import List
 from google import genai
 from google.genai import types
 
-from raredex_backend.label_generation.core.config import Settings
-from raredex_backend.label_generation.core.prompts import SPECIFICITY_PROMPT
+from analytics.raredex_backend.label_generation.core.config import Settings
+from analytics.raredex_backend.label_generation.core.prompts import SPECIFICITY_PROMPT
 
 
 class GeminiService:

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import List
 
-from raredex_backend.label_generation.core.config import Settings
-from raredex_backend.label_generation.repos.labels import LabelsRepository
-from raredex_backend.label_generation.services.gemini import GeminiService
+from analytics.raredex_backend.label_generation.core.config import Settings
+from analytics.raredex_backend.label_generation.repos.labels import LabelsRepository
+from analytics.raredex_backend.label_generation.services.gemini import GeminiService
 
 
 def dedupe_preserve_order(items: List[str]) -> List[str]:
