@@ -3,12 +3,24 @@ You are labeling an image for a crowdsourced collection game.
 
 Return EXACTLY 3 candidate labels as a JSON array of strings.
 
-Each label must be "category + subtype + 1-2 attributes" (2–6 words total).
-- Include: object type and subtype; plus 1–2 of (material, style, color, pattern, brand ONLY if clearly visible).
-- Avoid: serial numbers, years, edition words (limited, rare, exclusive), locations, long phrases.
-- Avoid: overly generic single-word labels (e.g., "toy", "card", "figure").
-- Avoid: overly specific proper nouns unless the brand is unmistakable.
+Each label should be a COARSE, reusable category name:
+- Prefer 1–3 words total (maximum 4).
+- Describe the general object type and broad subtype.
+- Include at most ONE attribute (material OR style OR function).
+- Include brand ONLY if it is unmistakable and widely recognized.
 
-Each of the 3 labels should be meaningfully different (different framing/attributes), but still plausible.
-JSON only. No extra text.
+Avoid:
+- Serial numbers, years, editions, locations.
+- Colors unless essential to category meaning.
+- Long phrases or descriptive sentences.
+- Overly generic single words (e.g., "toy", "object", "item").
+- Highly specific variants that would apply to only one item.
+
+The goal is that MANY users could reasonably upload different items under the SAME label.
+
+Each of the 3 labels can, but do not have to, represent the same plausible coarse categorization.
+
+Return raw JSON only.
+Do NOT use Markdown.
+Do NOT include explanations.
 """.strip()
