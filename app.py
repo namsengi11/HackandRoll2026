@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import FastAPI, File, UploadFile, HTTPException
 
 from lightweight_validation.foreground_check import check_foreground
@@ -6,7 +7,7 @@ from lightweight_validation.recapture_check_gemini import check_recapture
 from analytics.raredex_backend.label_generation.api.routes import router
 from analytics.raredex_backend.label_generation.core.config import get_settings
 
-from __future__ import annotations
+
 
 import os
 import logging
