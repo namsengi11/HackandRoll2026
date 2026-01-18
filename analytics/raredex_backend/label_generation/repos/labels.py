@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from raredex_backend.label_generation.core.config import Settings
-from raredex_backend.label_generation.services.supabase import SupabaseService
+from analytics.raredex_backend.label_generation.core.config import Settings
+from analytics.raredex_backend.label_generation.services.supabase import SupabaseService
 
 
 @dataclass
@@ -54,4 +54,3 @@ class LabelsRepository:
             return None
         return LabelMatch(label_id=int(label_id), label_name=label_name, similarity=sim)
 
-    
